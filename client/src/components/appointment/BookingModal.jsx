@@ -4,19 +4,21 @@ import confetti from 'canvas-confetti';
 import {
   Calendar,
   Clock,
-  User,
-  Building,
   CheckCircle2,
   AlertCircle,
   X,
   CreditCard,
   FileText,
   MapPin,
-  ChevronRight,
+  QrCode,
+  Smartphone,
+  Landmark,
+  Wallet,
 } from 'lucide-react';
 import { availabilityAPI, appointmentAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
+import qrCodeImg from '../../assets/qr.jpeg';
 
 export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess }) {
   const { user, isAuthenticated } = useAuth();
@@ -34,6 +36,16 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
   const [errorMessage, setErrorMessage] = useState('');
   const [bookingSuccessData, setBookingSuccessData] = useState(null);
 
+  // Payment States
+  const [paymentMethod, setPaymentMethod] = useState('qr'); // 'qr', 'upi', 'card', 'netbanking'
+  const [upiId, setUpiId] = useState('');
+  const [transactionRef, setTransactionRef] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [selectedBank, setSelectedBank] = useState('SBI');
+
   // Initialize next 7 days and strict shift when doctor is selected
   useEffect(() => {
     if (isOpen && doctor) {
@@ -42,6 +54,13 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
       setSelectedSlot('');
       setSymptoms('');
       setNotes('');
+      setPaymentMethod('qr');
+      setUpiId('');
+      setTransactionRef('');
+      setCardNumber('');
+      setCardName('');
+      setCardExpiry('');
+      setCardCvv('');
 
       // Lock shift filter strictly to doctor's assigned shift
       if (doctor.shift === 'Morning') {
@@ -122,8 +141,30 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
       return;
     }
 
+    // Payment Validation
+    if (paymentMethod === 'upi' && !upiId.includes('@')) {
+      setErrorMessage('Please enter a valid UPI ID (e.g., name@okaxis or 9876543210@ybl).');
+      return;
+    }
+
+    if (paymentMethod === 'card') {
+      if (cardNumber.replace(/\s/g, '').length < 16 || !cardExpiry || cardCvv.length < 3) {
+        setErrorMessage('Please enter valid 16-digit Card Number, Expiry Date, and CVV.');
+        return;
+      }
+    }
+
     setBookingLoading(true);
     setErrorMessage('');
+
+    const paymentInfoText =
+      paymentMethod === 'qr'
+        ? `Paid via QR Scan${transactionRef ? ` (Ref: ${transactionRef})` : ''}`
+        : paymentMethod === 'upi'
+        ? `Paid via UPI (${upiId})`
+        : paymentMethod === 'card'
+        ? `Paid via Card (**** ${cardNumber.slice(-4)})`
+        : `Paid via NetBanking (${selectedBank})`;
 
     try {
       const res = await appointmentAPI.bookAppointment({
@@ -131,11 +172,14 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
         date: selectedDate,
         timeSlot: selectedSlot,
         symptoms,
-        notes,
+        notes: notes ? `${notes} | ${paymentInfoText}` : paymentInfoText,
       });
 
       if (res.success) {
-        setBookingSuccessData(res.data);
+        setBookingSuccessData({
+          ...res.data,
+          paymentMethodLabel: paymentInfoText,
+        });
         fetchNotifications();
         try {
           confetti({
@@ -163,11 +207,9 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
     const isNoon = slot.time.startsWith('12:');
     const isEvening = isPM && !isNoon;
 
-    // Strict shift restriction:
     if (doctor.shift === 'Morning') return !isEvening;
     if (doctor.shift === 'Evening') return isEvening;
 
-    // Dual shift doctors obey user toggle:
     if (shiftFilter === 'Morning') return !isEvening;
     if (shiftFilter === 'Evening') return isEvening;
     return true;
@@ -178,7 +220,7 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
       <div
         className="modal-content"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '640px', padding: '0', overflow: 'hidden' }}
+        style={{ maxWidth: '660px', padding: '0', overflow: 'hidden' }}
       >
         {/* Modal Header */}
         <div
@@ -198,7 +240,7 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
             <h3 style={{ color: '#ffffff', fontSize: '1.25rem', marginTop: '2px' }}>
               {doctorDisplayName}
             </h3>
-            <div style={{ fontSize: '0.8rem', color: 'var(--slate-300)', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--slate-300)', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
               <span>{doctor.specialization}</span>
               <span>•</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -282,11 +324,11 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
               </div>
 
               <h2 style={{ fontSize: '1.4rem', color: 'var(--slate-900)' }}>
-                Appointment Booked Successfully!
+                Payment & Appointment Confirmed!
               </h2>
 
               <p style={{ color: 'var(--slate-600)', fontSize: '0.9rem', marginTop: '6px' }}>
-                Your appointment request has been recorded and sent to {doctorDisplayName}.
+                Your payment was received and your slot with {doctorDisplayName} is confirmed.
               </p>
 
               {/* Summary Card */}
@@ -318,7 +360,11 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--slate-500)' }}>Consultation Fee:</span>
-                  <strong>₹{bookingSuccessData.fee} (Paid)</strong>
+                  <strong style={{ color: '#15803d' }}>₹{bookingSuccessData.fee} (Paid)</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--slate-500)' }}>Payment Mode:</span>
+                  <strong>{bookingSuccessData.paymentMethodLabel}</strong>
                 </div>
               </div>
 
@@ -422,7 +468,6 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
                     <span>2. Select Time Slot</span>
                   </label>
 
-                  {/* Shift Filter Buttons or Locked Shift Badge */}
                   {doctor.shift === 'Morning' ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '3px 10px', borderRadius: '6px' }}>
                       <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#1e40af' }}>
@@ -484,7 +529,7 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
                       display: 'grid',
                       gridTemplateColumns: 'repeat(auto-fill, minmax(105px, 1fr))',
                       gap: '8px',
-                      maxHeight: '180px',
+                      maxHeight: '160px',
                       overflowY: 'auto',
                       padding: '4px',
                     }}
@@ -525,7 +570,193 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
                 />
               </div>
 
-              {/* STEP 4: Fee & Confirmation Button */}
+              {/* STEP 4: Payment Methods (QR Code, UPI ID, Card, Net Banking) */}
+              <div
+                style={{
+                  marginBottom: '20px',
+                  padding: '16px',
+                  background: '#f8fafc',
+                  border: '1.5px solid #e2e8f0',
+                  borderRadius: '12px',
+                }}
+              >
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                  <Wallet size={16} style={{ color: 'var(--primary-600)' }} />
+                  <span>4. Choose Payment Method (Pay ₹{doctor.consultationFee})</span>
+                </label>
+
+                {/* Payment Tabs */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: '8px',
+                    marginBottom: '16px',
+                  }}
+                >
+                  {[
+                    { id: 'qr', label: 'QR Scanner', icon: QrCode },
+                    { id: 'upi', label: 'UPI ID', icon: Smartphone },
+                    { id: 'card', label: 'Card', icon: CreditCard },
+                    { id: 'netbanking', label: 'NetBanking', icon: Landmark },
+                  ].map((method) => {
+                    const Icon = method.icon;
+                    const active = paymentMethod === method.id;
+                    return (
+                      <button
+                        key={method.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(method.id)}
+                        style={{
+                          padding: '10px 6px',
+                          borderRadius: '8px',
+                          border: active ? '2px solid var(--primary-600)' : '1px solid #cbd5e1',
+                          background: active ? '#eff6ff' : '#ffffff',
+                          color: active ? 'var(--primary-700)' : '#475569',
+                          fontWeight: active ? 700 : 600,
+                          fontSize: '0.78rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Icon size={18} />
+                        <span>{method.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Option 1: QR Scanner */}
+                {paymentMethod === 'qr' && (
+                  <div style={{ textAlign: 'center', background: '#ffffff', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                      Scan QR with PhonePe, GPay, Paytm or BHIM
+                    </div>
+                    <img
+                      src={qrCodeImg}
+                      alt="Payment QR Code"
+                      style={{
+                        width: '185px',
+                        height: '185px',
+                        objectFit: 'contain',
+                        borderRadius: '10px',
+                        border: '2px solid #e2e8f0',
+                        padding: '6px',
+                        margin: '0 auto 10px',
+                        display: 'block',
+                      }}
+                    />
+                    <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '10px' }}>
+                      Amount to Pay: <strong style={{ color: '#0f172a' }}>₹{doctor.consultationFee}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Enter UTR / Transaction ID (Optional)"
+                      value={transactionRef}
+                      onChange={(e) => setTransactionRef(e.target.value)}
+                      style={{ maxWidth: '280px', margin: '0 auto', fontSize: '0.82rem', padding: '7px 10px', textAlign: 'center' }}
+                    />
+                  </div>
+                )}
+
+                {/* Option 2: UPI ID */}
+                {paymentMethod === 'upi' && (
+                  <div style={{ background: '#ffffff', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      Enter Your UPI ID
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="e.g., dheeraj@ybl or mobile@paytm"
+                      value={upiId}
+                      onChange={(e) => setUpiId(e.target.value)}
+                      style={{ fontSize: '0.88rem' }}
+                    />
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '6px' }}>
+                      Supported apps: Google Pay, PhonePe, Paytm, Amazon Pay, BHIM UPI
+                    </div>
+                  </div>
+                )}
+
+                {/* Option 3: Debit / Credit Card */}
+                {paymentMethod === 'card' && (
+                  <div style={{ background: '#ffffff', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>Card Number</label>
+                      <input
+                        type="text"
+                        maxLength={19}
+                        className="form-control"
+                        placeholder="1234 5678 9012 3456"
+                        value={cardNumber}
+                        onChange={(e) => setCardNumber(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>Cardholder Name</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Name on Card"
+                        value={cardName}
+                        onChange={(e) => setCardName(e.target.value)}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div>
+                        <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>Expiry (MM/YY)</label>
+                        <input
+                          type="text"
+                          maxLength={5}
+                          className="form-control"
+                          placeholder="08/29"
+                          value={cardExpiry}
+                          onChange={(e) => setCardExpiry(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>CVV</label>
+                        <input
+                          type="password"
+                          maxLength={3}
+                          className="form-control"
+                          placeholder="123"
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Option 4: Net Banking */}
+                {paymentMethod === 'netbanking' && (
+                  <div style={{ background: '#ffffff', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      Select Your Bank
+                    </label>
+                    <select
+                      className="form-control"
+                      value={selectedBank}
+                      onChange={(e) => setSelectedBank(e.target.value)}
+                    >
+                      <option value="SBI">State Bank of India (SBI)</option>
+                      <option value="HDFC">HDFC Bank</option>
+                      <option value="ICICI">ICICI Bank</option>
+                      <option value="Axis">Axis Bank</option>
+                      <option value="PNB">Punjab National Bank (PNB)</option>
+                      <option value="Kotak">Kotak Mahindra Bank</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* STEP 5: Fee & Confirmation Button */}
               <div
                 style={{
                   paddingTop: '16px',
@@ -537,7 +768,7 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
               >
                 <div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--slate-400)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Consultation Fee
+                    Total Payable
                   </div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--slate-900)' }}>
                     ₹{doctor.consultationFee}
@@ -548,9 +779,9 @@ export default function BookingModal({ doctor, isOpen, onClose, onBookingSuccess
                   type="submit"
                   disabled={bookingLoading || !selectedSlot}
                   className="btn btn-primary"
-                  style={{ minWidth: '190px' }}
+                  style={{ minWidth: '210px' }}
                 >
-                  {bookingLoading ? 'Securing Slot...' : 'Confirm Appointment'}
+                  {bookingLoading ? 'Processing Payment...' : `Pay ₹${doctor.consultationFee} & Confirm`}
                 </button>
               </div>
             </form>

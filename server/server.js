@@ -9,6 +9,9 @@ const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 dotenv.config();
 
 const app = express();
+app.listen(5001, () => {
+  console.log("Server running on port 5001");
+});
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
@@ -88,7 +91,7 @@ connectDB()
   })
   .catch((err) => {
     console.error('Failed to initialize database connection:', err);
-    process.exit(1);
+   // process.exit(1);
   });
 
 // Handle unhandled rejections
